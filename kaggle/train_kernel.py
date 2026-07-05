@@ -5,7 +5,7 @@ the ``fraud_scoring`` package -- Kaggle has no access to the repo. All logic
 (feature engineering, hyperparameters, metrics) is inlined here and kept in sync
 with ``params.yaml`` and the shared FEATURE CONTRACT.
 
-Inputs  : /kaggle/input/creditcardfraud/creditcard.csv
+Inputs  : creditcard.csv, resolved under /kaggle/input (mount folder may vary)
 Outputs : /kaggle/working/{model_xgb.json, model_torch.pt,
                             feature_importance.json, metrics.json}
 """
@@ -38,8 +38,29 @@ from torch.utils.data import DataLoader, TensorDataset
 SEED = 42
 TEST_SIZE = 0.2
 
-INPUT_CSV = "/kaggle/input/creditcardfraud/creditcard.csv"
 WORKING_DIR = "/kaggle/working"
+
+
+def _resolve_input_csv() -> str:
+    """Locate creditcard.csv under /kaggle/input regardless of the mount folder.
+
+    Kaggle mounts an attached dataset under /kaggle/input/<slug>/, and the exact
+    folder can vary, so glob for the file rather than hard-coding the path.
+    """
+    import glob
+
+    candidates = [
+        "/kaggle/input/creditcardfraud/creditcard.csv",
+        *glob.glob("/kaggle/input/**/creditcard.csv", recursive=True),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    listing = glob.glob("/kaggle/input/*") + glob.glob("/kaggle/input/*/*")
+    raise FileNotFoundError(
+        "creditcard.csv not found under /kaggle/input. "
+        f"Available paths: {listing}"
+    )
 
 # Ordered feature contract: V1..V28, Amount, Amount_log, Hour, Amount_z.
 V_COLS = [f"V{i}" for i in range(1, 29)]
@@ -73,6 +94,38 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def _pick_torch_device() -> str:
+    """Return 'cuda' only if the GPU's compute capability is supported by this
+    PyTorch build; otherwise 'cpu'.
+
+    Kaggle may assign a Tesla P100 (sm_60), which modern PyTorch wheels no longer
+    support (they require sm_70+). Selecting cuda there raises a runtime CUDA
+    error, so we check the capability and the supported arch list up front.
+    """
+    if not torch.cuda.is_available():
+        return "cpu"
+    try:
+        major, minor = torch.cuda.get_device_capability(0)
+        dev_cap = major * 10 + minor  # e.g. 60 for P100, 75 for T4, 80 for A100
+        arch_caps = []
+        for a in torch.cuda.get_arch_list():  # e.g. ['sm_70','sm_75',...,'sm_120']
+            if a.startswith("sm_"):
+                try:
+                    arch_caps.append(int(a.split("_")[1]))  # 'sm_100' -> 100
+                except ValueError:
+                    pass
+        if arch_caps and dev_cap < min(arch_caps):
+            print(
+                f"[torch] GPU compute capability {major}.{minor} is below this "
+                f"PyTorch build's minimum ({min(arch_caps)}); falling back to CPU."
+            )
+            return "cpu"
+    except Exception as exc:  # noqa: BLE001 -- be conservative, prefer CPU
+        print(f"[torch] capability check failed ({exc}); using CPU.")
+        return "cpu"
+    return "cuda"
 
 
 # --------------------------------------------------------------------------- #
@@ -196,13 +249,14 @@ def train_torch(
     input_mean: np.ndarray,
     input_std: np.ndarray,
     pos_weight_value: float,
+    force_device: str | None = None,
 ) -> tuple[MLP, np.ndarray, str]:
     """Train the MLP; return (model, test_scores, device).
 
     Inputs are standardized with ``input_mean`` / ``input_std`` (fit on train).
     Returns predicted fraud probabilities for the test split.
     """
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = force_device or _pick_torch_device()
     print(f"[torch] using device: {device}")
 
     # Standardize (mean/std fit on train, applied to both splits).
@@ -265,8 +319,9 @@ def main() -> None:
     print("=" * 70)
 
     # ---- Load & split -----------------------------------------------------
-    df = pd.read_csv(INPUT_CSV)
-    print(f"loaded {len(df):,} rows from {INPUT_CSV}")
+    input_csv = _resolve_input_csv()
+    df = pd.read_csv(input_csv)
+    print(f"loaded {len(df):,} rows from {input_csv}")
 
     y = df["Class"].astype(int).values
     train_df, test_df, y_train, y_test = train_test_split(
@@ -304,9 +359,16 @@ def main() -> None:
     input_std = X_train.std(axis=0)
     input_std = np.where(input_std > 0, input_std, 1.0)  # guard zero-variance
 
-    torch_model, torch_scores, torch_device = train_torch(
-        X_train, y_train, X_test, input_mean, input_std, torch_pos_weight
-    )
+    try:
+        torch_model, torch_scores, torch_device = train_torch(
+            X_train, y_train, X_test, input_mean, input_std, torch_pos_weight
+        )
+    except Exception as exc:  # noqa: BLE001 -- last-resort CUDA->CPU fallback
+        print(f"[torch] GPU training failed ({exc!r}); retrying on CPU")
+        torch_model, torch_scores, torch_device = train_torch(
+            X_train, y_train, X_test, input_mean, input_std, torch_pos_weight,
+            force_device="cpu",
+        )
     torch_metrics = compute_metrics(y_test, torch_scores, torch_device)
 
     # ---- Best model by pr_auc --------------------------------------------

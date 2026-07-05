@@ -1,5 +1,5 @@
 {
-  "id": "USERNAME/fraud-scoring-gpu-train",
+  "id": "gulhanimsc/fraud-scoring-gpu-train",
   "title": "fraud-scoring-gpu-train",
   "code_file": "train_kernel.py",
   "language": "python",
