@@ -173,6 +173,9 @@ def _parse_status(text: str) -> str | None:
         token = token.replace('"', "").replace("'", "")
         token = token.split()[0] if token.split() else ""
         token = token.strip('."\'`')
+        # The CLI reports an enum repr like ``KernelWorkerStatus.COMPLETE`` -- keep
+        # only the final component so it matches TERMINAL_STATUSES ("complete", ...).
+        token = token.rsplit(".", 1)[-1]
         if token:
             return token
     # Fallback: scan for any known status keyword.
