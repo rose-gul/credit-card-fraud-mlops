@@ -1,0 +1,41 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# --- Data & models (DVC-tracked, not committed) ---
+data/
+models/
+metrics/
+mlruns/
+mlartifacts/
+mlflow.db
+*.parquet
+*.pkl
+*.joblib
+*.pt
+*.pth
+
+# --- Kaggle artifacts ---
+kaggle/output/
+*.zip
+kaggle.json
+
+# --- Tooling ---
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.dvc/cache/
+.dvc/tmp/
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

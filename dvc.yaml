@@ -1,0 +1,51 @@
+stages:
+  download:
+    cmd: python -m fraud_scoring.data.download
+    outs:
+      - data/raw/creditcard.csv
+
+  preprocess:
+    cmd: python -m fraud_scoring.data.preprocess
+    deps:
+      - data/raw/creditcard.csv
+      - src/fraud_scoring/data/preprocess.py
+    params:
+      - seed
+      - data.test_size
+      - data.scale_cols
+      - data.target
+    outs:
+      - data/processed/train.parquet
+      - data/processed/test.parquet
+      - data/processed/scaler.joblib
+    metrics:
+      - data/processed/preprocess_summary.json:
+          cache: false
+
+  train_gpu:
+    # Runs remotely on Kaggle GPU; owned by another agent. Wired here as a command.
+    cmd: python -m fraud_scoring.pipeline.run_kaggle_gpu
+    deps:
+      - data/processed/train.parquet
+      - data/processed/test.parquet
+      - src/fraud_scoring/features/build_features.py
+    params:
+      - seed
+      - features
+      - xgboost
+      - torch
+    outs:
+      - models/metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: python -m fraud_scoring.evaluate.evaluate
+    deps:
+      - data/processed/test.parquet
+      - models
+      - src/fraud_scoring/features/build_features.py
+    params:
+      - thresholds
+    metrics:
+      - metrics/eval.json:
+          cache: false

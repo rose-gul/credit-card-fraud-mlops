@@ -1,0 +1,54 @@
+version: "3.8"
+
+# ---------------------------------------------------------------------------
+# Local stack for the fraud-scoring platform.
+#
+#   serving : the multi-agent FastAPI scoring API (built from ./Dockerfile).
+#   mlflow  : optional MLflow tracking/registry UI over the local ./mlruns store.
+#
+# Usage:
+#   docker compose up serving            # just the API
+#   docker compose up                    # API + MLflow UI
+# ---------------------------------------------------------------------------
+
+services:
+  serving:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fraud-scoring:latest
+    container_name: fraud-scoring-serving
+    ports:
+      - "8000:8000"
+    # Optional runtime settings (FRAUD_* vars). The file is optional: create a
+    # .env from .env.example, or delete this line to run with defaults.
+    env_file:
+      - .env
+    environment:
+      # Path is relative to the app workdir; models are mounted read-only below.
+      FRAUD_MODEL_PATH: models/model_xgb.json
+    volumes:
+      # Serve a trained model from the host without baking it into the image.
+      - ./models:/app/models:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Optional: MLflow tracking + model registry UI over the local file store.
+  mlflow:
+    image: python:3.11-slim
+    container_name: fraud-scoring-mlflow
+    working_dir: /workspace
+    command: >
+      sh -c "pip install --no-cache-dir mlflow>=2.12 &&
+             mlflow ui --host 0.0.0.0 --port 5000
+             --backend-store-uri file:///workspace/mlruns"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/workspace/mlruns
+    restart: unless-stopped

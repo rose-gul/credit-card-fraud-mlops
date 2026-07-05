@@ -1,0 +1,17 @@
+# Patterns DVC should ignore when tracking / hashing files.
+# Syntax mirrors .gitignore.
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+
+# Local env & secrets (never data-tracked)
+.env
+.venv/
+*.log
